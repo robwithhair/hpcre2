@@ -20,6 +20,7 @@ import qualified Data.Vector.Storable as V
 import qualified Data.Vector.Storable.Mutable as M
 import Data.Word
 import Data.Char
+import Data.Bits((.|.))
 import Text.Regex.PCRE2.Wrap.Helper
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as E
@@ -27,6 +28,12 @@ import qualified Data.ByteString as B
 
 foreign import capi "pcre2.h value PCRE2_JIT_COMPLETE"
   c_PCRE2_JIT_COMPLETE :: CUInt
+
+foreign import capi "pcre2.h value PCRE2_NOTEMPTY_ATSTART"
+  c_PCRE2_NOTEMPTY_ATSTART :: CUInt
+
+foreign import capi "pcre2.h value PCRE2_ANCHORED"
+  c_PCRE2_ANCHORED :: CUInt
 
 foreign import capi "pcre2.h value PCRE2_ZERO_TERMINATED"
   c_PCRE2_ZERO_TERMINATED :: CSize
@@ -102,12 +109,16 @@ data PCRE2Error = CompilationError PCRE2ErrorCode PCRE2ErrorOffset
      | KUsedToSetMatchStartAfterEnd
      | JITMatchVectorOffsetsTooSmall deriving Show
 
-data Match = Match GroupCount [MatchPosition]
+data Match = Match GroupCount [MatchPosition] deriving Show
 data MatchResult = MatchResult GroupCount (ForeignPtr MatchData) deriving Show
 
 -- Get csize of vector
 cVectorSize :: V.Vector Word8 -> CSize
 cVectorSize = fromIntegral . V.length
+
+-- | Combine a list of options into a single option, using bitwise (.|.)
+combineOptions :: [CUInt] -> CUInt
+combineOptions = foldr (.|.) 0
 
 compileRegexFromCTypes :: CStringLen -> Ptr CInt -> Ptr CSize -> IO (Either PCRE2Error (ForeignPtr Code))
 compileRegexFromCTypes (regexPointer, regexLength) errorCode errorOffset = do
@@ -151,9 +162,9 @@ matchResultCode res | res == -1 = Left NoMatch
                     | res == 0 = Left JITMatchVectorOffsetsTooSmall
                     | otherwise = Left $ JITMatchError $ fromIntegral res
 
-performMatchAtOffset :: Ptr Code -> CStringLen -> Ptr MatchData -> Ptr MatchContext -> CSize -> IO (Either PCRE2Error Match)
-performMatchAtOffset regex (text, textLength) matchDataPtr matchContext offset = do
-                     res <- c_pcre2_jit_match regex text (fromIntegral textLength) offset 0 matchDataPtr matchContext
+performMatchAtOffset :: Ptr Code -> CStringLen -> Ptr MatchData -> Ptr MatchContext -> CUInt -> CSize  -> IO (Either PCRE2Error [Match])
+performMatchAtOffset regex (text, textLength) matchDataPtr matchContext options offset = do
+                     res <- c_pcre2_jit_match regex text (fromIntegral textLength) offset options matchDataPtr matchContext
 
                      let code = matchResultCode res in
                          case code of
@@ -163,28 +174,40 @@ performMatchAtOffset regex (text, textLength) matchDataPtr matchContext offset =
                                      xMatchGroups <- convertToIntegers [ peekElemOff ovectorPointer x | i <- [0..matchCount], let x = i * 2 ]
                                      yMatchGroups <- convertToIntegers [ peekElemOff ovectorPointer (x + 1) | i <- [0..matchCount], let x = i * 2]
                                      let matchGroups =  filter (uncurry (<=)) $ zip xMatchGroups yMatchGroups
-                                     return $ Right $ Match matchCount matchGroups
+                                     let endOfRecursion = return $ Right [Match matchCount matchGroups]
+                                     let nextOptions = case matchGroups of
+                                                            [] -> options
+                                                            (start, end) : _ | start == end -> combineOptions [c_PCRE2_NOTEMPTY_ATSTART, c_PCRE2_ANCHORED, options]
+                                                                             | otherwise -> options
+                                     case matchGroups of
+                                          [] -> endOfRecursion
+                                          (start, end) : _ | end == (toInteger textLength) -> endOfRecursion
+                                                           | otherwise -> do
+                                                                   nextRes <- performMatchAtOffset regex (text, textLength) matchDataPtr matchContext nextOptions $ fromInteger end
+                                                                   case nextRes of
+                                                                        (Right m) -> return $ Right (Match matchCount matchGroups : m)
+                                                                        (Left NoMatch) -> return $ Right [Match matchCount matchGroups]
+                                                                        (Left error) -> return $ Left error
                               (Left error) -> return $ Left error
 
-performMatch :: Ptr Code -> CStringLen -> Maybe (ForeignPtr MatchData) -> IO (Either PCRE2Error MatchResult)
+performMatch :: Ptr Code -> CStringLen -> Maybe (ForeignPtr MatchData) -> IO (Either PCRE2Error [Match])
 performMatch _ _ Nothing = return $ Left MatchDataCreateError
 performMatch regex text (Just matchData) = withForeignPtr matchData $ \matchDataPtr -> do
-             res <- performMatchAtOffset regex text matchDataPtr nullPtr 0
+             res <- performMatchAtOffset regex text matchDataPtr nullPtr 0 0
+             finalizeForeignPtr matchData
              case res of
-                  (Right (Match matchCount matchGroups) ) -> do
-                        putStrLn $ show matchGroups
-                        return $ Right $ MatchResult matchCount matchData
+                  (Right matches) -> do
+                        return $ Right matches
                   (Left error) -> do
-                        finalizeForeignPtr matchData
                         return $ Left error
 
-matchFromCString :: ForeignPtr Code -> CStringLen -> IO (Either PCRE2Error MatchResult)
+matchFromCString :: ForeignPtr Code -> CStringLen -> IO (Either PCRE2Error [Match])
 matchFromCString regex text = withForeignPtr regex $ \regexPointer -> do
                  matchData <- matchDataCreate regex
                  performMatch regexPointer text matchData
 
-matchFromByte8String :: ForeignPtr Code -> B.ByteString -> IO (Either PCRE2Error MatchResult)
+matchFromByte8String :: ForeignPtr Code -> B.ByteString -> IO (Either PCRE2Error [Match])
 matchFromByte8String regex text = B.useAsCStringLen text $ \cString -> matchFromCString regex cString
 
-match :: ForeignPtr Code -> T.Text -> IO (Either PCRE2Error MatchResult)
+match :: ForeignPtr Code -> T.Text -> IO (Either PCRE2Error [Match])
 match regex = matchFromByte8String regex . E.encodeUtf8
