@@ -1,6 +1,5 @@
 {-# LANGUAGE ForeignFunctionInterface #-}
 {-# LANGUAGE CApiFFI #-}
-{-# LANGUAGE BangPatterns #-}
 
 module Text.Regex.PCRE2.Wrap(compileRegex
                            , compileRegexFromByte8String
@@ -21,6 +20,7 @@ import qualified Data.Vector.Storable as V
 import qualified Data.Vector.Storable.Mutable as M
 import Data.Word
 import Data.Char
+import Text.Regex.PCRE2.Wrap.Helper
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as E
 import qualified Data.ByteString as B
@@ -79,6 +79,9 @@ foreign import ccall "pcre2.h pcre2_pattern_info_8"
 foreign import ccall "pcre2.h pcre2_match_context_create_8"
   c_pcre2_match_context_create :: Ptr GeneralContext -> IO (Ptr MatchContext)
 
+foreign import ccall "pcre2.h pcre2_get_ovector_pointer_8"
+  c_pcre2_get_ovector_pointer :: Ptr MatchData -> IO (Ptr CSize)
+
 data MatchData
 data MatchContext
 data Code
@@ -87,7 +90,8 @@ data JitStack
 
 type PCRE2ErrorCode = Int
 type PCRE2ErrorOffset = Int
-type MatchCount = Int
+type GroupCount = Int
+type MatchPosition = (Integer, Integer)
 
 data PCRE2Error = CompilationError PCRE2ErrorCode PCRE2ErrorOffset
      | JITCompilationError PCRE2ErrorCode
@@ -95,9 +99,11 @@ data PCRE2Error = CompilationError PCRE2ErrorCode PCRE2ErrorOffset
      | JITMatchError PCRE2ErrorCode
      | NoMatch
      | PartialMatch
+     | KUsedToSetMatchStartAfterEnd
      | JITMatchVectorOffsetsTooSmall deriving Show
 
-data MatchResult = MatchResult MatchCount (ForeignPtr MatchData) deriving Show
+data Match = Match GroupCount [MatchPosition]
+data MatchResult = MatchResult GroupCount (ForeignPtr MatchData) deriving Show
 
 -- Get csize of vector
 cVectorSize :: V.Vector Word8 -> CSize
@@ -138,23 +144,39 @@ matchDataPointerCreate regex = do
 matchDataCreate :: ForeignPtr Code -> IO (Maybe (ForeignPtr MatchData))
 matchDataCreate regex = withForeignPtr regex $ \pointerToRegex -> matchDataPointerCreate pointerToRegex
 
-matchResultCode :: CInt -> Either PCRE2Error MatchCount
+matchResultCode :: CInt -> Either PCRE2Error GroupCount
 matchResultCode res | res == -1 = Left NoMatch
                     | res > 0 = Right $ (fromIntegral res) - 1
                     | res == -2 = Left PartialMatch
                     | res == 0 = Left JITMatchVectorOffsetsTooSmall
                     | otherwise = Left $ JITMatchError $ fromIntegral res
 
+performMatchAtOffset :: Ptr Code -> CStringLen -> Ptr MatchData -> Ptr MatchContext -> CSize -> IO (Either PCRE2Error Match)
+performMatchAtOffset regex (text, textLength) matchDataPtr matchContext offset = do
+                     res <- c_pcre2_jit_match regex text (fromIntegral textLength) offset 0 matchDataPtr matchContext
+
+                     let code = matchResultCode res in
+                         case code of
+                              (Right matchCount) -> do
+                                     ovectorPointer <- c_pcre2_get_ovector_pointer matchDataPtr
+                                     let convertToIntegers = fmap (map toInteger) . sequence
+                                     xMatchGroups <- convertToIntegers [ peekElemOff ovectorPointer x | i <- [0..matchCount], let x = i * 2 ]
+                                     yMatchGroups <- convertToIntegers [ peekElemOff ovectorPointer (x + 1) | i <- [0..matchCount], let x = i * 2]
+                                     let matchGroups =  filter (uncurry (<=)) $ zip xMatchGroups yMatchGroups
+                                     return $ Right $ Match matchCount matchGroups
+                              (Left error) -> return $ Left error
+
 performMatch :: Ptr Code -> CStringLen -> Maybe (ForeignPtr MatchData) -> IO (Either PCRE2Error MatchResult)
 performMatch _ _ Nothing = return $ Left MatchDataCreateError
-performMatch regex (text, textLength) (Just matchData) = withForeignPtr matchData $ \matchDataPtr -> do
-             res <- c_pcre2_jit_match regex text (fromIntegral textLength) 0 0 matchDataPtr nullPtr
-             let code = matchResultCode res in
-                 case code of
-                      (Right matchCount) -> return $ Right $ MatchResult matchCount matchData
-                      (Left error) -> do
-                            finalizeForeignPtr matchData
-                            return $ Left error
+performMatch regex text (Just matchData) = withForeignPtr matchData $ \matchDataPtr -> do
+             res <- performMatchAtOffset regex text matchDataPtr nullPtr 0
+             case res of
+                  (Right (Match matchCount matchGroups) ) -> do
+                        putStrLn $ show matchGroups
+                        return $ Right $ MatchResult matchCount matchData
+                  (Left error) -> do
+                        finalizeForeignPtr matchData
+                        return $ Left error
 
 matchFromCString :: ForeignPtr Code -> CStringLen -> IO (Either PCRE2Error MatchResult)
 matchFromCString regex text = withForeignPtr regex $ \regexPointer -> do
