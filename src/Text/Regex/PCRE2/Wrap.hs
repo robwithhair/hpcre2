@@ -5,6 +5,8 @@ module Text.Regex.PCRE2.Wrap(compileRegex
                            , compileRegexFromByte8String
                            , match
                            , matchFromByte8String
+                           , serializeRegexs
+                           , serializeRegexsInContext
 ) where
 
 
@@ -14,8 +16,10 @@ import Foreign.C.String(CString
                       , CStringLen)
 import Foreign.Ptr
 import Foreign.Marshal.Alloc
+import Foreign.Marshal.Array(peekArray)
 import Foreign.Storable
 import Foreign.ForeignPtr
+import Foreign.ForeignPtr.Unsafe
 import qualified Data.Vector.Storable as V
 import qualified Data.Vector.Storable.Mutable as M
 import Data.Word
@@ -25,6 +29,7 @@ import Text.Regex.PCRE2.Wrap.Helper
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as E
 import qualified Data.ByteString as B
+import qualified Data.ByteString.Internal as BI
 
 foreign import capi "pcre2.h value PCRE2_JIT_COMPLETE"
   c_PCRE2_JIT_COMPLETE :: CUInt
@@ -89,6 +94,15 @@ foreign import ccall "pcre2.h pcre2_match_context_create_8"
 foreign import ccall "pcre2.h pcre2_get_ovector_pointer_8"
   c_pcre2_get_ovector_pointer :: Ptr MatchData -> IO (Ptr CSize)
 
+foreign import ccall unsafe "pcre2.h pcre2_serialize_encode_8"
+  c_pcre2_serialize_encode :: Ptr (Ptr Code) -> CInt -> Ptr (Ptr CUChar) -> Ptr CSize -> Ptr GeneralContext -> IO CInt
+
+foreign import ccall unsafe "pcre2.h pcre2_serialize_decode_8"
+  c_pcre2_serialize_decode :: Ptr (Ptr Code) -> CInt -> Ptr CUChar -> Ptr GeneralContext -> IO CInt
+
+foreign import ccall unsafe "pcre2.h &pcre2_serialize_free_8"
+  c_pcre2_serialize_free :: FunPtr (Ptr CUChar -> IO ())
+
 data MatchData
 data MatchContext
 data Code
@@ -102,6 +116,7 @@ type MatchPosition = (Integer, Integer)
 
 data PCRE2Error = CompilationError PCRE2ErrorCode PCRE2ErrorOffset
      | JITCompilationError PCRE2ErrorCode
+     | SerializationError PCRE2ErrorCode
      | MatchDataCreateError
      | JITMatchError PCRE2ErrorCode
      | NoMatch
@@ -211,3 +226,30 @@ matchFromByte8String regex text = B.useAsCStringLen text $ \cString -> matchFrom
 
 match :: ForeignPtr Code -> T.Text -> IO (Either PCRE2Error [Match])
 match regex = matchFromByte8String regex . E.encodeUtf8
+
+serializeRegexsInContext :: ForeignPtr GeneralContext -> [ForeignPtr Code] -> IO (Either PCRE2Error B.ByteString)
+serializeRegexsInContext context regexs = do
+                out <- withForeignPtr context $ \contextPtr -> V.unsafeWith vectorToForeignRegexs $ \regexsPtr -> alloca $ \serializedPtr -> alloca $ \serializedSizePtr -> do
+                    res <- c_pcre2_serialize_encode regexsPtr regexesLength serializedPtr serializedSizePtr contextPtr
+                    serializedDataPtr <- peek serializedPtr
+                    serializedData <- newForeignPtr c_pcre2_serialize_free serializedDataPtr
+                    -- check if the serialization was successful
+                    if res < 0 then return $ Left $ SerializationError $ fromIntegral res else do
+                       serializedSize <- peek serializedSizePtr
+                       return $ Right $ BI.fromForeignPtr (castForeignPtr serializedData) 0 $ fromIntegral serializedSize
+                return $ touch regexs
+                return out
+                where
+                vectorToForeignRegexs = V.fromList $ map (unsafeForeignPtrToPtr) regexs
+                regexesLength = fromIntegral $ V.length vectorToForeignRegexs
+                touch = map (touchForeignPtr)
+
+serializeRegexs :: [ForeignPtr Code] -> IO (Either PCRE2Error B.ByteString)
+serializeRegexs regexs = do
+                null <- newForeignPtr_ nullPtr
+                serializeRegexsInContext null regexs
+
+-- deserializeRegexsInContext :: ForeignPtr GeneralContext -> B.ByteString -> Int -> IO [ForeignPtr Code]
+
+-- deserializeRegexs :: B.ByteString -> Int -> IO [ForeignPtr Code]
+-- deserializeRegexs = newForeignPtr_ nullPtr >>= \null -> deserializeRegexsInContext null
