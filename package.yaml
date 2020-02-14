@@ -29,6 +29,8 @@ library:
   source-dirs: src
   ghc-options:
     - -optc "-DPCRE2_CODE_UNIT_WIDTH=8"
+  extra-libraries:
+    - pcre2-8
 
 executables:
   hpcre2-exe:
