@@ -16,6 +16,7 @@ module Text.Regex.PCRE2.Wrap(compileRegex
                            , CompiledRegex
                            , JITCompiledRegex
                            , PCRE2Error(..)
+                           , Match(..)
 ) where
 
 
