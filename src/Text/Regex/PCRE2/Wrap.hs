@@ -13,6 +13,8 @@ module Text.Regex.PCRE2.Wrap(compileRegex
                            , deserializeJITRegexs
                            , jitCompileRegex
                            , jitCompile
+                           , CompiledRegex
+                           , JITCompiledRegex
 ) where
 
 
@@ -121,6 +123,9 @@ type PCRE2ErrorOffset = Int
 type GroupCount = Int
 type MatchPosition = (Integer, Integer)
 
+type CompiledRegex = ForeignPtr Code
+type JITCompiledRegex = ForeignPtr JITCode
+
 data PCRE2Error = CompilationError PCRE2ErrorCode PCRE2ErrorOffset
      | JITCompilationError PCRE2ErrorCode
      | SerializationError PCRE2ErrorCode
@@ -144,7 +149,7 @@ combineOptions :: [CUInt] -> CUInt
 combineOptions = foldr (.|.) 0
 
 -- | Further JIT compile an already compiled regular expression code
-jitCompile :: ForeignPtr Code -> IO (Either PCRE2Error (ForeignPtr JITCode))
+jitCompile :: CompiledRegex -> IO (Either PCRE2Error JITCompiledRegex)
 jitCompile foreignCompiledRegex = withForeignPtr foreignCompiledRegex $ \compiledRegex  -> do
            rc <- c_pcre2_jit_compile compiledRegex c_PCRE2_JIT_COMPLETE
            if rc /= 0 then
@@ -152,7 +157,7 @@ jitCompile foreignCompiledRegex = withForeignPtr foreignCompiledRegex $ \compile
            else do
               return $ Right $ castForeignPtr foreignCompiledRegex
 
-compileRegexFromCTypes :: CStringLen -> Ptr CInt -> Ptr CSize -> IO (Either PCRE2Error (ForeignPtr Code))
+compileRegexFromCTypes :: CStringLen -> Ptr CInt -> Ptr CSize -> IO (Either PCRE2Error CompiledRegex)
 compileRegexFromCTypes (regexPointer, regexLength) errorCode errorOffset = do
                        compiledRegex <- c_pcre2_compile regexPointer (fromIntegral regexLength) c_PCRE2_UTF errorCode errorOffset nullPtr
                        if compiledRegex == nullPtr then do
@@ -164,21 +169,21 @@ compileRegexFromCTypes (regexPointer, regexLength) errorCode errorOffset = do
                             return $ Right foreignRegex
 
 -- Compile a regex from a vector of 8 bit chars
-compileRegexFromByte8String :: B.ByteString -> IO (Either PCRE2Error (ForeignPtr Code))
+compileRegexFromByte8String :: B.ByteString -> IO (Either PCRE2Error CompiledRegex)
 compileRegexFromByte8String regex = alloca $ \errorCode -> alloca $ \errorOffset ->
                        B.useAsCStringLen regex $ \regexPointer -> compileRegexFromCTypes regexPointer errorCode errorOffset
 
 -- JIT Compile a regex from a string
-jitCompileRegex :: T.Text -> IO (Either PCRE2Error (ForeignPtr JITCode))
+jitCompileRegex :: T.Text -> IO (Either PCRE2Error JITCompiledRegex)
 jitCompileRegex text = do
                 compiledRegex <- compileRegex text
                 case compiledRegex of
-                     (Left error) -> return $ Left error
+                     (Left err) -> return $ Left err
                      (Right re) -> jitCompile re
 
 
 -- Compile a regex from a String
-compileRegex :: T.Text -> IO (Either PCRE2Error (ForeignPtr Code))
+compileRegex :: T.Text -> IO (Either PCRE2Error CompiledRegex)
 compileRegex = compileRegexFromByte8String . E.encodeUtf8
 
 matchDataPointerCreate :: Ptr Code -> IO (Maybe (ForeignPtr MatchData))
@@ -189,7 +194,7 @@ matchDataPointerCreate regex = do
                    return $ Just foreignData
 
 -- Create a pointer to Match Data to ensure we have somewhere to save the matches
-matchDataCreate :: ForeignPtr Code -> IO (Maybe (ForeignPtr MatchData))
+matchDataCreate :: CompiledRegex -> IO (Maybe (ForeignPtr MatchData))
 matchDataCreate regex = withForeignPtr regex $ \pointerToRegex -> matchDataPointerCreate pointerToRegex
 
 matchResultCode :: CInt -> Either PCRE2Error GroupCount
@@ -238,18 +243,18 @@ performMatch regex text (Just matchData) = withForeignPtr matchData $ \matchData
                   (Left error) -> do
                         return $ Left error
 
-matchFromCString :: ForeignPtr JITCode -> CStringLen -> IO (Either PCRE2Error [Match])
+matchFromCString :: JITCompiledRegex -> CStringLen -> IO (Either PCRE2Error [Match])
 matchFromCString regex text = withForeignPtr regex $ \regexPointer -> do
                  matchData <- matchDataCreate $ castForeignPtr regex
                  performMatch regexPointer text matchData
 
-matchFromByte8String :: ForeignPtr JITCode -> B.ByteString -> IO (Either PCRE2Error [Match])
+matchFromByte8String :: JITCompiledRegex -> B.ByteString -> IO (Either PCRE2Error [Match])
 matchFromByte8String regex text = B.useAsCStringLen text $ \cString -> matchFromCString regex cString
 
-match :: ForeignPtr JITCode -> T.Text -> IO (Either PCRE2Error [Match])
+match :: JITCompiledRegex -> T.Text -> IO (Either PCRE2Error [Match])
 match regex = matchFromByte8String regex . E.encodeUtf8
 
-serializeRegexsInContext :: ForeignPtr GeneralContext -> [ForeignPtr Code] -> IO (Either PCRE2Error B.ByteString)
+serializeRegexsInContext :: ForeignPtr GeneralContext -> [CompiledRegex] -> IO (Either PCRE2Error B.ByteString)
 serializeRegexsInContext context regexs = do
                 out <- withForeignPtr context $ \contextPtr -> V.unsafeWith vectorToForeignRegexs $ \regexsPtr -> alloca $ \serializedPtr -> alloca $ \serializedSizePtr -> do
                     res <- c_pcre2_serialize_encode regexsPtr regexesLength serializedPtr serializedSizePtr contextPtr
@@ -266,16 +271,16 @@ serializeRegexsInContext context regexs = do
                 regexesLength = fromIntegral $ V.length vectorToForeignRegexs
                 touch = map (touchForeignPtr)
 
-serializeRegexs :: [ForeignPtr Code] -> IO (Either PCRE2Error B.ByteString)
+serializeRegexs :: [CompiledRegex] -> IO (Either PCRE2Error B.ByteString)
 serializeRegexs regexs = newForeignPtr_ nullPtr >>= \null -> serializeRegexsInContext null regexs
 
-serializeJitRegexs :: [ForeignPtr JITCode] -> IO (Either PCRE2Error B.ByteString)
+serializeJitRegexs :: [JITCompiledRegex] -> IO (Either PCRE2Error B.ByteString)
 serializeJitRegexs regexs = serializeRegexs $ map (castForeignPtr) regexs
 
 deserializeRegexsInContext :: ForeignPtr GeneralContext                 -- ^ An optional pointer to a general PCRE2 context or a Null Pointer wrapped as a Foreign Pointer
                            -> B.ByteString                              -- ^ The data to convert to multiple regular expressions
                            -> Int                                       -- ^ The number of regular expressions contained in the data
-                           -> IO (Either PCRE2Error [ForeignPtr Code])  -- ^ Returns an array of Foreign Pointers to Regular Expressions or an error
+                           -> IO (Either PCRE2Error [CompiledRegex])  -- ^ Returns an array of Foreign Pointers to Regular Expressions or an error
 deserializeRegexsInContext context bytes numberOfRegexs = withForeignPtr context $ \contextPtr -> alloca $ \regexsPtr -> withForeignPtr (castForeignPtr (first3 (BI.toForeignPtr bytes))) $ \bytesPtr -> do
                            res <- c_pcre2_serialize_decode regexsPtr (fromIntegral numberOfRegexs) bytesPtr contextPtr
                            if res < 0 then return $ Left $ DeserializationError $ fromIntegral res else do
@@ -284,15 +289,15 @@ deserializeRegexsInContext context bytes numberOfRegexs = withForeignPtr context
                               return $ Right out
 
 -- A helper function to pass a Null Pointer as the Context
-deserializeRegexs :: B.ByteString -> Int -> IO (Either PCRE2Error [ForeignPtr Code])
+deserializeRegexs :: B.ByteString -> Int -> IO (Either PCRE2Error [CompiledRegex])
 deserializeRegexs bytes numberOfRegexs = newForeignPtr_ nullPtr >>= \null -> deserializeRegexsInContext null bytes numberOfRegexs
 
 -- A helper function to deserialise and JIT compile a regex
-deserializeJITRegexs :: B.ByteString -> Int -> IO (Either PCRE2Error [ForeignPtr JITCode])
+deserializeJITRegexs :: B.ByteString -> Int -> IO (Either PCRE2Error [JITCompiledRegex])
 deserializeJITRegexs bytes numberOfRegexs = do
                      regexs <- deserializeRegexs bytes numberOfRegexs
                      case regexs of
-                          (Left error) -> return $ Left error
+                          (Left e) -> return $ Left e
                           (Right rs) -> do
-                                 compiled <- sequence $ map jitCompile rs
+                                 compiled <- mapM jitCompile rs
                                  return $ handleArrayOfEithers compiled
