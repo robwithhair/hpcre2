@@ -240,8 +240,8 @@ performMatchAtOffset regex (text, textLength) matchDataPtr matchContext options 
                                                                    case nextRes of
                                                                         (Right m) -> return $ Right (Match matchCount matchGroups : m)
                                                                         (Left NoMatch) -> return $ Right [Match matchCount matchGroups]
-                                                                        (Left error) -> return $ Left error
-                              (Left error) -> return $ Left error
+                                                                        (Left err) -> return $ Left err
+                              (Left err) -> return $ Left err
 
 performMatch :: Ptr JITCode -> CStringLen -> Maybe (ForeignPtr MatchData) -> IO (Either PCRE2Error [Match])
 performMatch _ _ Nothing = return $ Left MatchDataCreateError
@@ -249,10 +249,10 @@ performMatch regex text (Just matchData) = withForeignPtr matchData $ \matchData
              res <- performMatchAtOffset regex text matchDataPtr nullPtr 0 0
              finalizeForeignPtr matchData
              case res of
-                  (Right matches) -> do
+                  (Right matches) ->
                         return $ Right matches
-                  (Left error) -> do
-                        return $ Left error
+                  (Left err) ->
+                        return $ Left err
 
 matchFromCString :: JITCompiledRegex -> CStringLen -> IO (Either PCRE2Error [Match])
 matchFromCString regex text = withForeignPtr regex $ \regexPointer -> do
