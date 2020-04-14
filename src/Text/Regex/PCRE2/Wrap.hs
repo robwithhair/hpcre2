@@ -17,6 +17,9 @@ module Text.Regex.PCRE2.Wrap(compileRegex
                            , JITCompiledRegex
                            , PCRE2Error(..)
                            , Match(..)
+                           , MatchPosition
+                           , matchPositionStart
+                           , matchPositionEnd
 ) where
 
 
@@ -141,6 +144,12 @@ data PCRE2Error = CompilationError PCRE2ErrorCode PCRE2ErrorOffset
 
 data Match = Match GroupCount [MatchPosition] deriving (Eq, Show)
 data MatchResult = MatchResult GroupCount (ForeignPtr MatchData) deriving (Eq, Show)
+
+matchPositionStart :: MatchPosition -> Integer
+matchPositionStart (s, _) = s
+
+matchPositionEnd :: MatchPosition -> Integer
+matchPositionEnd (_, e) = e
 
 -- Get csize of vector
 cVectorSize :: V.Vector Word8 -> CSize
