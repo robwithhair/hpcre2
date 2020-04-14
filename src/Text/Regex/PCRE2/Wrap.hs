@@ -136,10 +136,10 @@ data PCRE2Error = CompilationError PCRE2ErrorCode PCRE2ErrorOffset
      | NoMatch
      | PartialMatch
      | KUsedToSetMatchStartAfterEnd
-     | JITMatchVectorOffsetsTooSmall deriving Show
+     | JITMatchVectorOffsetsTooSmall deriving (Eq, Show)
 
-data Match = Match GroupCount [MatchPosition] deriving Show
-data MatchResult = MatchResult GroupCount (ForeignPtr MatchData) deriving Show
+data Match = Match GroupCount [MatchPosition] deriving (Eq, Show)
+data MatchResult = MatchResult GroupCount (ForeignPtr MatchData) deriving (Eq, Show)
 
 -- Get csize of vector
 cVectorSize :: V.Vector Word8 -> CSize
