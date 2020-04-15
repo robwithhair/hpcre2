@@ -42,5 +42,5 @@ readRegex = do
                (Right []) -> putStrLn "Empty regex list returned"
                (Right (regex : _)) -> do
                      putStrLn "Got a regex"
-                     matches <- match regex "This is maybe the best so far don't you think?  Really was not the best so far."
+                     matches <- jitMatch regex "This is maybe the best so far don't you think?  Really was not the best so far."
                      putStrLn $ show matches

@@ -6,6 +6,8 @@ module Text.Regex.PCRE2.Wrap(compileRegex
                            , compileRegexFromByte8String
                            , match
                            , matchFromByte8String
+                           , jitMatch
+                           , jitMatchFromByte8String
                            , serializeRegexs
                            , serializeJitRegexs
                            , serializeRegexsInContext
@@ -81,6 +83,9 @@ foreign import ccall "pcre2.h &pcre2_code_free_8"
 foreign import ccall unsafe "pcre2.h pcre2_jit_match_8"
   c_pcre2_jit_match :: Ptr JITCode -> CString -> CSize -> CSize -> CUInt
     -> Ptr MatchData -> Ptr MatchContext -> IO CInt
+
+foreign import ccall unsafe "pcre2.h pcre2_match_8"
+  c_pcre2_match :: Ptr Code -> CString -> CSize -> CSize -> CUInt -> Ptr MatchData -> Ptr MatchContext -> IO CInt
 
 foreign import ccall "pcre2.h pcre2_jit_stack_create_8"
   c_pcre2_jit_stack_create :: CSize -> CSize -> Ptr () -> IO (Ptr JitStack)
@@ -220,8 +225,8 @@ matchResultCode res | res == -1 = Left NoMatch
                     | res == 0 = Left JITMatchVectorOffsetsTooSmall
                     | otherwise = Left $ JITMatchError $ fromIntegral res
 
-performMatchAtOffset :: Ptr JITCode -> CStringLen -> Ptr MatchData -> Ptr MatchContext -> CUInt -> CSize  -> IO (Either PCRE2Error [Match])
-performMatchAtOffset regex (text, textLength) matchDataPtr matchContext options offset = do
+performJitMatchAtOffset :: Ptr JITCode -> CStringLen -> Ptr MatchData -> Ptr MatchContext -> CUInt -> CSize  -> IO (Either PCRE2Error [Match])
+performJitMatchAtOffset regex (text, textLength) matchDataPtr matchContext options offset = do
                      res <- c_pcre2_jit_match regex text (fromIntegral textLength) offset options matchDataPtr matchContext
 
                      let code = matchResultCode res in
@@ -248,10 +253,10 @@ performMatchAtOffset regex (text, textLength) matchDataPtr matchContext options 
                                                                         (Left err) -> return $ Left err
                               (Left err) -> return $ Left err
 
-performMatch :: Ptr JITCode -> CStringLen -> Maybe (ForeignPtr MatchData) -> IO (Either PCRE2Error [Match])
-performMatch _ _ Nothing = return $ Left MatchDataCreateError
-performMatch regex text (Just matchData) = withForeignPtr matchData $ \matchDataPtr -> do
-             res <- performMatchAtOffset regex text matchDataPtr nullPtr 0 0
+performJitMatch :: Ptr JITCode -> CStringLen -> Maybe (ForeignPtr MatchData) -> IO (Either PCRE2Error [Match])
+performJitMatch _ _ Nothing = return $ Left MatchDataCreateError
+performJitMatch regex text (Just matchData) = withForeignPtr matchData $ \matchDataPtr -> do
+             res <- performJitMatchAtOffset regex text matchDataPtr nullPtr 0 0
              finalizeForeignPtr matchData
              case res of
                   (Right matches) ->
@@ -259,16 +264,16 @@ performMatch regex text (Just matchData) = withForeignPtr matchData $ \matchData
                   (Left err) ->
                         return $ Left err
 
-matchFromCString :: JITCompiledRegex -> CStringLen -> IO (Either PCRE2Error [Match])
-matchFromCString regex text = withForeignPtr regex $ \regexPointer -> do
+jitMatchFromCString :: JITCompiledRegex -> CStringLen -> IO (Either PCRE2Error [Match])
+jitMatchFromCString regex text = withForeignPtr regex $ \regexPointer -> do
                  matchData <- matchDataCreate $ castForeignPtr regex
-                 performMatch regexPointer text matchData
+                 performJitMatch regexPointer text matchData
 
-matchFromByte8String :: JITCompiledRegex -> B.ByteString -> IO (Either PCRE2Error [Match])
-matchFromByte8String regex text = B.useAsCStringLen text $ \cString -> matchFromCString regex cString
+jitMatchFromByte8String :: JITCompiledRegex -> B.ByteString -> IO (Either PCRE2Error [Match])
+jitMatchFromByte8String regex text = B.useAsCStringLen text $ \cString -> jitMatchFromCString regex cString
 
-match :: JITCompiledRegex -> T.Text -> IO (Either PCRE2Error [Match])
-match regex = matchFromByte8String regex . E.encodeUtf8
+jitMatch :: JITCompiledRegex -> T.Text -> IO (Either PCRE2Error [Match])
+jitMatch regex = jitMatchFromByte8String regex . E.encodeUtf8
 
 serializeRegexsInContext :: ForeignPtr GeneralContext -> [CompiledRegex] -> IO (Either PCRE2Error B.ByteString)
 serializeRegexsInContext context regexs = do
@@ -317,3 +322,54 @@ deserializeJITRegexs bytes numberOfRegexs = do
                           (Right rs) -> do
                                  compiled <- mapM jitCompile rs
                                  return $ handleArrayOfEithers compiled
+
+
+match :: CompiledRegex -> T.Text -> IO (Either PCRE2Error [Match])
+match regex = matchFromByte8String regex . E.encodeUtf8
+
+matchFromByte8String :: CompiledRegex -> B.ByteString -> IO (Either PCRE2Error [Match])
+matchFromByte8String regex text = B.useAsCStringLen text $ \cString -> matchFromCString regex cString
+
+matchFromCString :: CompiledRegex -> CStringLen -> IO (Either PCRE2Error [Match])
+matchFromCString regex text = withForeignPtr regex $ \regexPointer -> do
+                 matchData <- matchDataCreate $ castForeignPtr regex
+                 performMatch regexPointer text matchData
+
+performMatch :: Ptr Code -> CStringLen -> Maybe (ForeignPtr MatchData) -> IO (Either PCRE2Error [Match])
+performMatch _ _ Nothing = return $ Left MatchDataCreateError
+performMatch regex text (Just matchData) = withForeignPtr matchData $ \matchDataPtr -> do
+             res <- performMatchAtOffset regex text matchDataPtr nullPtr 0 0
+             finalizeForeignPtr matchData
+             case res of
+                  (Right matches) ->
+                        return $ Right matches
+                  (Left err) ->
+                        return $ Left err
+
+performMatchAtOffset :: Ptr Code -> CStringLen -> Ptr MatchData -> Ptr MatchContext -> CUInt -> CSize  -> IO (Either PCRE2Error [Match])
+performMatchAtOffset regex (text, textLength) matchDataPtr matchContext options offset = do
+                     res <- c_pcre2_match regex text (fromIntegral textLength) offset options matchDataPtr matchContext
+
+                     let code = matchResultCode res in
+                         case code of
+                              (Right matchCount) -> do
+                                     ovectorPointer <- c_pcre2_get_ovector_pointer matchDataPtr
+                                     let convertToIntegers = fmap (map toInteger) . sequence
+                                     xMatchGroups <- convertToIntegers [ peekElemOff ovectorPointer x | i <- [0..matchCount], let x = i * 2 ]
+                                     yMatchGroups <- convertToIntegers [ peekElemOff ovectorPointer (x + 1) | i <- [0..matchCount], let x = i * 2]
+                                     let matchGroups =  filter (uncurry (<=)) $ zip xMatchGroups yMatchGroups
+                                     let endOfRecursion = return $ Right [Match matchCount matchGroups]
+                                     let nextOptions = case matchGroups of
+                                                            [] -> options
+                                                            (start, end) : _ | start == end -> combineOptions [c_PCRE2_NOTEMPTY_ATSTART, c_PCRE2_ANCHORED, options]
+                                                                             | otherwise -> options
+                                     case matchGroups of
+                                          [] -> endOfRecursion
+                                          (_, end) : _ | end == toInteger textLength -> endOfRecursion
+                                                       | otherwise -> do
+                                                                   nextRes <- performMatchAtOffset regex (text, textLength) matchDataPtr matchContext nextOptions $ fromInteger end
+                                                                   case nextRes of
+                                                                        (Right m) -> return $ Right (Match matchCount matchGroups : m)
+                                                                        (Left NoMatch) -> return $ Right [Match matchCount matchGroups]
+                                                                        (Left err) -> return $ Left err
+                              (Left err) -> return $ Left err
