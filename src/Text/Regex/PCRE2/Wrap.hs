@@ -1,5 +1,6 @@
 {-# LANGUAGE ForeignFunctionInterface #-}
 {-# LANGUAGE CApiFFI #-}
+{-# LANGUAGE DeriveGeneric, DeriveAnyClass #-}
 
 module Text.Regex.PCRE2.Wrap(compileRegex
                            , compileRegexFromByte8String
@@ -43,6 +44,10 @@ import qualified Data.Text as T
 import qualified Data.Text.Encoding as E
 import qualified Data.ByteString as B
 import qualified Data.ByteString.Internal as BI
+
+import GHC.Generics
+import Control.DeepSeq
+
 
 foreign import capi "pcre2.h value PCRE2_JIT_COMPLETE"
   c_PCRE2_JIT_COMPLETE :: CUInt
@@ -140,7 +145,7 @@ data PCRE2Error = CompilationError PCRE2ErrorCode PCRE2ErrorOffset
      | NoMatch
      | PartialMatch
      | KUsedToSetMatchStartAfterEnd
-     | JITMatchVectorOffsetsTooSmall deriving (Eq, Show)
+     | JITMatchVectorOffsetsTooSmall deriving (Eq, Show, Generic, NFData)
 
 data Match = Match GroupCount [MatchPosition] deriving (Eq, Show)
 data MatchResult = MatchResult GroupCount (ForeignPtr MatchData) deriving (Eq, Show)

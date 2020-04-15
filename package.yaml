@@ -24,6 +24,7 @@ dependencies:
 - vector
 - text
 - bytestring
+- deepseq
 
 library:
   source-dirs: src
