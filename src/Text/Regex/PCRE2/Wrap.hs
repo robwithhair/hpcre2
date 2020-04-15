@@ -239,9 +239,9 @@ performMatchAtOffset regex (text, textLength) matchDataPtr matchContext options 
                                                                              | otherwise -> options
                                      case matchGroups of
                                           [] -> endOfRecursion
-                                          (start, end) : _ | end == (toInteger textLength) -> endOfRecursion
-                                                           | otherwise -> do
-                                                                   nextRes <- performMatchAtOffset regex (text, textLength) matchDataPtr matchContext nextOptions $ fromInteger end
+                                          (_, end) : _ | end == toInteger textLength -> endOfRecursion
+                                                       | otherwise -> do
+                                                                   nextRes <- performJitMatchAtOffset regex (text, textLength) matchDataPtr matchContext nextOptions $ fromInteger end
                                                                    case nextRes of
                                                                         (Right m) -> return $ Right (Match matchCount matchGroups : m)
                                                                         (Left NoMatch) -> return $ Right [Match matchCount matchGroups]
