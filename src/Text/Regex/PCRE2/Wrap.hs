@@ -211,7 +211,7 @@ matchDataPointerCreate :: Ptr Code -> IO (Maybe (ForeignPtr MatchData))
 matchDataPointerCreate regex = do
                 matchData <- c_pcre2_match_data_create_from_pattern regex nullPtr
                 if matchData == nullPtr then return Nothing else do
-                   foreignData <- newForeignPtr c_pcre2_match_data_free matchData
+                   foreignData <- newForeignPtr_  matchData
                    return $ Just foreignData
 
 -- Create a pointer to Match Data to ensure we have somewhere to save the matches
