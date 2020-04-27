@@ -114,6 +114,9 @@ foreign import ccall "pcre2.h pcre2_pattern_info_8"
 foreign import ccall "pcre2.h pcre2_match_context_create_8"
   c_pcre2_match_context_create :: Ptr GeneralContext -> IO (Ptr MatchContext)
 
+foreign import ccall "pcre2.h pcre2_match_context_free_8"
+  c_pcre2_match_context_free :: Ptr MatchContext -> IO ()
+
 foreign import ccall "pcre2.h pcre2_get_ovector_pointer_8"
   c_pcre2_get_ovector_pointer :: Ptr MatchData -> IO (Ptr CSize)
 
@@ -343,6 +346,7 @@ performMatch regex text (Just matchData) = withForeignPtr matchData $ \matchData
              context <- c_pcre2_match_context_create nullPtr
              res <- performMatchAtOffset regex text matchDataPtr context 0 0
              -- finalizeForeignPtr matchData
+             c_pcre2_match_context_free context
              case res of
                   (Right matches) ->
                         return $ Right matches
