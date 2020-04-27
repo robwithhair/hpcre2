@@ -123,8 +123,8 @@ foreign import ccall unsafe "pcre2.h pcre2_serialize_encode_8"
 foreign import ccall unsafe "pcre2.h pcre2_serialize_decode_8"
   c_pcre2_serialize_decode :: Ptr (Ptr Code) -> CInt -> Ptr CUChar -> Ptr GeneralContext -> IO CInt
 
-foreign import ccall unsafe "pcre2.h &pcre2_serialize_free_8"
-  c_pcre2_serialize_free :: FunPtr (Ptr CUChar -> IO ())
+foreign import ccall unsafe "pcre2.h pcre2_serialize_free_8"
+  c_pcre2_serialize_free :: Ptr CUChar -> IO ()
 
 data MatchData
 data MatchContext
@@ -280,7 +280,7 @@ serializeRegexsInContext context regexs = do
                 out <- withForeignPtr context $ \contextPtr -> V.unsafeWith vectorToForeignRegexs $ \regexsPtr -> alloca $ \serializedPtr -> alloca $ \serializedSizePtr -> do
                     res <- c_pcre2_serialize_encode regexsPtr regexesLength serializedPtr serializedSizePtr contextPtr
                     serializedDataPtr <- peek serializedPtr
-                    serializedData <- newForeignPtr c_pcre2_serialize_free serializedDataPtr
+                    serializedData <- newForeignPtr_ serializedDataPtr
                     -- check if the serialization was successful
                     if res < 0 then return $ Left $ SerializationError $ fromIntegral res else do
                        serializedSize <- peek serializedSizePtr
