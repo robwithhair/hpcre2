@@ -105,8 +105,8 @@ foreign import ccall "pcre2.h pcre2_match_data_create_from_pattern_8"
 foreign import ccall "pcre2.h pcre2_jit_stack_free_8"
   c_pcre2_jit_stack_free :: Ptr JitStack -> IO ()
 
-foreign import ccall "pcre2.h &pcre2_match_data_free_8"
-  c_pcre2_match_data_free :: FunPtr (Ptr MatchData -> IO ())
+foreign import ccall "pcre2.h pcre2_match_data_free_8"
+  c_pcre2_match_data_free :: Ptr MatchData -> IO ()
 
 foreign import ccall "pcre2.h pcre2_pattern_info_8"
   c_pcre2_pattern_info :: Ptr Code -> CUInt -> Ptr CSize -> IO (CInt)
@@ -311,7 +311,7 @@ deserializeRegexsInContext context bytes numberOfRegexs = withForeignPtr context
 
 -- A helper function to pass a Null Pointer as the Context
 deserializeRegexs :: B.ByteString -> Int -> IO (Either PCRE2Error [CompiledRegex])
-deserializeRegexs bytes numberOfRegexs = newForeignPtr_ nullPtr >>= \null -> deserializeRegexsInContext null bytes numberOfRegexs
+deserializeRegexs bytes numberOfRegexs = newForeignPtr_ nullPtr >>= \n -> deserializeRegexsInContext n bytes numberOfRegexs
 
 -- A helper function to deserialise and JIT compile a regex
 deserializeJITRegexs :: B.ByteString -> Int -> IO (Either PCRE2Error [JITCompiledRegex])
