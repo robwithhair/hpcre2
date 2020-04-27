@@ -211,7 +211,7 @@ matchDataPointerCreate :: Ptr Code -> IO (Maybe (ForeignPtr MatchData))
 matchDataPointerCreate regex = do
                 matchData <- c_pcre2_match_data_create_from_pattern regex nullPtr
                 if matchData == nullPtr then return Nothing else do
-                   foreignData <- newForeignPtr (c_pcre2_match_data_free) matchData
+                   foreignData <- newForeignPtr c_pcre2_match_data_free matchData
                    return $ Just foreignData
 
 -- Create a pointer to Match Data to ensure we have somewhere to save the matches
@@ -220,7 +220,7 @@ matchDataCreate regex = withForeignPtr regex $ \pointerToRegex -> matchDataPoint
 
 matchResultCode :: CInt -> Either PCRE2Error GroupCount
 matchResultCode res | res == -1 = Left NoMatch
-                    | res > 0 = Right $ (fromIntegral res) - 1
+                    | res > 0 = Right $ fromIntegral res - 1
                     | res == -2 = Left PartialMatch
                     | res == 0 = Left JITMatchVectorOffsetsTooSmall
                     | otherwise = Left $ JITMatchError $ fromIntegral res
