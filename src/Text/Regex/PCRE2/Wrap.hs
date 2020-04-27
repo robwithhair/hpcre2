@@ -78,11 +78,13 @@ foreign import ccall "pcre2.h pcre2_jit_compile_8"
 foreign import ccall "pcre2.h &pcre2_code_free_8"
   c_pcre2_code_free :: FunPtr (Ptr Code -> IO ())
 
-foreign import ccall "pcre2.h pcre2_jit_match_8"
+-- This one is marked unsafe for extra performance.
+-- See https://wiki.haskell.org/Performance/FFI
+foreign import ccall unsafe "pcre2.h pcre2_jit_match_8"
   c_pcre2_jit_match :: Ptr JITCode -> CString -> CSize -> CSize -> CUInt
     -> Ptr MatchData -> Ptr MatchContext -> IO CInt
 
-foreign import ccall "pcre2.h pcre2_match_8"
+foreign import ccall unsafe "pcre2.h pcre2_match_8"
   c_pcre2_match :: Ptr Code -> CString -> CSize -> CSize -> CUInt -> Ptr MatchData -> Ptr MatchContext -> IO CInt
 
 foreign import ccall "pcre2.h pcre2_jit_stack_create_8"
@@ -115,13 +117,13 @@ foreign import ccall "pcre2.h pcre2_match_context_create_8"
 foreign import ccall "pcre2.h pcre2_get_ovector_pointer_8"
   c_pcre2_get_ovector_pointer :: Ptr MatchData -> IO (Ptr CSize)
 
-foreign import ccall "pcre2.h pcre2_serialize_encode_8"
+foreign import ccall unsafe "pcre2.h pcre2_serialize_encode_8"
   c_pcre2_serialize_encode :: Ptr (Ptr Code) -> CInt -> Ptr (Ptr CUChar) -> Ptr CSize -> Ptr GeneralContext -> IO CInt
 
-foreign import ccall "pcre2.h pcre2_serialize_decode_8"
+foreign import ccall unsafe "pcre2.h pcre2_serialize_decode_8"
   c_pcre2_serialize_decode :: Ptr (Ptr Code) -> CInt -> Ptr CUChar -> Ptr GeneralContext -> IO CInt
 
-foreign import ccall "pcre2.h &pcre2_serialize_free_8"
+foreign import ccall unsafe "pcre2.h &pcre2_serialize_free_8"
   c_pcre2_serialize_free :: FunPtr (Ptr CUChar -> IO ())
 
 data MatchData
