@@ -340,7 +340,8 @@ matchFromCString regex text = withForeignPtr regex $ \regexPointer -> do
 performMatch :: Ptr Code -> CStringLen -> Maybe (ForeignPtr MatchData) -> IO (Either PCRE2Error [Match])
 performMatch _ _ Nothing = return $ Left MatchDataCreateError
 performMatch regex text (Just matchData) = withForeignPtr matchData $ \matchDataPtr -> do
-             res <- performMatchAtOffset regex text matchDataPtr nullPtr 0 0
+             context <- c_pcre2_match_context_create nullPtr
+             res <- performMatchAtOffset regex text matchDataPtr context 0 0
              -- finalizeForeignPtr matchData
              case res of
                   (Right matches) ->
