@@ -324,6 +324,8 @@ deserializeJITRegexs bytes numberOfRegexs = do
                                  return $ handleArrayOfEithers compiled
 
 
+
+
 match :: CompiledRegex -> T.Text -> IO (Either PCRE2Error [Match])
 match regex = matchFromByte8String regex . E.encodeUtf8
 
@@ -339,7 +341,7 @@ performMatch :: Ptr Code -> CStringLen -> Maybe (ForeignPtr MatchData) -> IO (Ei
 performMatch _ _ Nothing = return $ Left MatchDataCreateError
 performMatch regex text (Just matchData) = withForeignPtr matchData $ \matchDataPtr -> do
              res <- performMatchAtOffset regex text matchDataPtr nullPtr 0 0
-             finalizeForeignPtr matchData
+             -- finalizeForeignPtr matchData
              case res of
                   (Right matches) ->
                         return $ Right matches
