@@ -302,12 +302,11 @@ serializeRegexsInContext context regexs = do
                     if res < 0 then return $ Left $ SerializationError $ fromIntegral res else do
                        serializedSize <- peek serializedSizePtr
                        return $ Right $ BI.fromForeignPtr (castForeignPtr serializedData) 0 $ fromIntegral serializedSize
-                return $ touch regexs
+                mapM_ touchForeignPtr regexs
                 return out
                 where
-                vectorToForeignRegexs = V.fromList $ map (unsafeForeignPtrToPtr) regexs
+                vectorToForeignRegexs = V.fromList $ map unsafeForeignPtrToPtr regexs
                 regexesLength = fromIntegral $ V.length vectorToForeignRegexs
-                touch = map (touchForeignPtr)
 
 serializeRegexs :: [CompiledRegex] -> IO (Either PCRE2Error B.ByteString)
 {-# NOINLINE serializeRegexs #-}
