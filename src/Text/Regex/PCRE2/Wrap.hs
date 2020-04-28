@@ -75,8 +75,8 @@ foreign import ccall "pcre2.h pcre2_compile_8"
 foreign import ccall "pcre2.h pcre2_jit_compile_8"
   c_pcre2_jit_compile :: Ptr Code -> CUInt -> IO (CInt)
 
-foreign import ccall "pcre2.h pcre2_code_free_8"
-  c_pcre2_code_free :: Ptr Code -> IO ()
+foreign import ccall "pcre2.h &pcre2_code_free_8"
+  c_pcre2_code_free :: FunPtr (Ptr Code -> IO ())
 
 -- This one is marked unsafe for extra performance.
 -- See https://wiki.haskell.org/Performance/FFI
@@ -191,7 +191,7 @@ compileRegexFromCTypes (regexPointer, regexLength) errorCode errorOffset = do
                           errorCodeOffset <- peek errorOffset
                           return $ Left $ CompilationError (fromIntegral errorCodePeek) (fromIntegral errorCodeOffset)
                        else do
-                            foreignRegex <- newForeignPtr_ compiledRegex
+                            foreignRegex <- newForeignPtr (c_pcre2_code_free) compiledRegex
                             return $ Right foreignRegex
 
 -- Compile a regex from a vector of 8 bit chars
@@ -325,7 +325,7 @@ deserializeRegexsInContext context bytes numberOfRegexs = withForeignPtr context
                            res <- c_pcre2_serialize_decode regexsPtr (fromIntegral numberOfRegexs) bytesPtr contextPtr
                            if res < 0 then return $ Left $ DeserializationError $ fromIntegral res else do
                               regexs <- peekArray numberOfRegexs regexsPtr
-                              out <- mapM newForeignPtr_ regexs
+                              out <- mapM (newForeignPtr c_pcre2_code_free) regexs
                               return $ Right out
 
 -- A helper function to pass a Null Pointer as the Context
