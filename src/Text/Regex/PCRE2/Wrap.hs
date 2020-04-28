@@ -32,7 +32,7 @@ import Foreign.C.String(CString
                       , CStringLen)
 import Foreign.Ptr
 import Foreign.Marshal.Alloc
-import Foreign.Marshal.Array(peekArray, mallocArray)
+import Foreign.Marshal.Array(peekArray, mallocArray, allocaArray)
 import Foreign.Storable
 import Foreign.ForeignPtr
 import Foreign.ForeignPtr.Unsafe
@@ -321,8 +321,7 @@ deserializeRegexsInContext :: ForeignPtr GeneralContext                 -- ^ An 
                            -> Int                                       -- ^ The number of regular expressions contained in the data
                            -> IO (Either PCRE2Error [CompiledRegex])  -- ^ Returns an array of Foreign Pointers to Regular Expressions or an error
 {-# NOINLINE deserializeRegexsInContext #-}
-deserializeRegexsInContext context bytes numberOfRegexs = withForeignPtr context $ \contextPtr -> withForeignPtr (castForeignPtr (first3 (BI.toForeignPtr bytes))) $ \bytesPtr -> do
-                           regexsPtr <- mallocArray numberOfRegexs
+deserializeRegexsInContext context bytes numberOfRegexs = withForeignPtr context $ \contextPtr -> withForeignPtr (castForeignPtr (first3 (BI.toForeignPtr bytes))) $ \bytesPtr -> allocaArray numberOfRegexs $ \regexsPtr -> do
                            res <- c_pcre2_serialize_decode regexsPtr (fromIntegral numberOfRegexs) bytesPtr contextPtr
                            if res < 0 then return $ Left $ DeserializationError $ fromIntegral res else do
                               regexs <- peekArray numberOfRegexs regexsPtr
