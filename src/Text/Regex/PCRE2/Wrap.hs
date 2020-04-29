@@ -50,7 +50,6 @@ import qualified Data.ByteString.Internal as BI
 import GHC.Generics
 import Control.DeepSeq
 
-
 foreign import capi "pcre2.h value PCRE2_JIT_COMPLETE"
   c_PCRE2_JIT_COMPLETE :: CUInt
 
@@ -105,8 +104,8 @@ foreign import ccall "pcre2.h pcre2_match_data_create_from_pattern_8"
 foreign import ccall "pcre2.h pcre2_jit_stack_free_8"
   c_pcre2_jit_stack_free :: Ptr JitStack -> IO ()
 
-foreign import ccall "pcre2.h pcre2_match_data_free_8"
-  c_pcre2_match_data_free :: Ptr MatchData -> IO ()
+foreign import ccall "pcre2.h &pcre2_match_data_free_8"
+  c_pcre2_match_data_free :: FunPtr (Ptr MatchData -> IO ())
 
 foreign import ccall "pcre2.h pcre2_pattern_info_8"
   c_pcre2_pattern_info :: Ptr Code -> CUInt -> Ptr CSize -> IO (CInt)
@@ -295,10 +294,10 @@ serializeRegexsInContext context regexs = do
                 regexesLength = fromIntegral $ V.length vectorToForeignRegexs
 
 serializeRegexs :: [CompiledRegex] -> IO (Either PCRE2Error B.ByteString)
-serializeRegexs regexs = newForeignPtr_ nullPtr >>= \null -> serializeRegexsInContext null regexs
+serializeRegexs regexs = nullForeignPtr >>= \nil -> serializeRegexsInContext nil regexs
 
 serializeJitRegexs :: [JITCompiledRegex] -> IO (Either PCRE2Error B.ByteString)
-serializeJitRegexs regexs = serializeRegexs $ map (castForeignPtr) regexs
+serializeJitRegexs regexs = serializeRegexs $ map castForeignPtr regexs
 
 deserializeRegexsInContext :: ForeignPtr GeneralContext                 -- ^ An optional pointer to a general PCRE2 context or a Null Pointer wrapped as a Foreign Pointer
                            -> B.ByteString                              -- ^ The data to convert to multiple regular expressions
@@ -313,7 +312,10 @@ deserializeRegexsInContext context bytes numberOfRegexs = withForeignPtr context
 
 -- A helper function to pass a Null Pointer as the Context
 deserializeRegexs :: B.ByteString -> Int -> IO (Either PCRE2Error [CompiledRegex])
-deserializeRegexs bytes numberOfRegexs = newForeignPtr_ nullPtr >>= \n -> deserializeRegexsInContext n bytes numberOfRegexs
+deserializeRegexs bytes numberOfRegexs = nullForeignPtr >>= \nil -> deserializeRegexsInContext nil bytes numberOfRegexs
+
+nullForeignPtr :: IO (ForeignPtr a)
+nullForeignPtr = newForeignPtr_ nullPtr
 
 -- A helper function to deserialise and JIT compile a regex
 deserializeJITRegexs :: B.ByteString -> Int -> IO (Either PCRE2Error [JITCompiledRegex])
